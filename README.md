@@ -1,34 +1,41 @@
-# 🎯 Gaze Pilot Prototype
+Gaze Pilot Prototype
+An experimental web-based directional control interface powered by real-time head-pose estimation and computer vision.
 
-An experimental, web-based directional control interface powered by real-time head-pose estimation and computer vision. **Gaze Pilot** tracks head orientation directly through a standard webcam, translating natural pitch, yaw, and roll movements into responsive onscreen navigation and controls without requiring specialized hardware.
+🚀 Live Demo
+Test the live application directly in your web browser:
 
-🚀 **[View Live Demo](https://caspian1988.github.io/gaze_pilot_prototype-/)**
+🔗 Gaze Pilot Live Demo
 
----
+✨ Key Features
+Real-time Head-Pose Tracking: Detects pitch, yaw, and roll orientation directly from standard webcam feeds.
 
-## ✨ Features
+Directional Control Engine: Translates natural head movements into smooth directional control vectors.
 
-* **Real-time Head-Pose Tracking**: Captures facial orientation and head direction using high-precision computer vision.
-* **Directional Control Engine**: Translates natural tilt and rotation (pitch, yaw) into smooth, low-latency control vectors.
-* **Browser-Native & Lightweight**: Runs 100% client-side in standard web browsers—no external software installation required.
-* **Privacy-First Processing**: All video feeds are processed locally on device; no camera data or imagery is ever uploaded or transmitted.
-* **Interactive Visual Overlay**: Built-in canvas overlay provides real-time diagnostic feedback and direction tracking indicators.
+Browser-Native & Lightweight: Runs 100% client-side with zero external software or plugin installations.
 
----
+Privacy-First Processing: Camera feeds stay local on your device—no video data is sent to external servers.
 
-## 🛠️ Built With
+Visual Overlay: Real-time canvas tracking gives active feedback on control direction and head orientation.
 
-* **HTML5 / CSS3**: Responsive UI layout and dark-mode control overlay.
-* **JavaScript (ES6+)**: Core mathematical transformation and control vector logic.
-* **Canvas API**: High-fps visual feedback and landmark tracking.
-* **GitHub Pages**: Fast, zero-config static hosting.
+🛠️ Built With
+HTML5 & CSS3: High-contrast, dark-mode responsive interface.
 
----
+Vanilla JavaScript (ES6+): Custom coordinate mapping and control vector algorithms.
 
-## 🚀 Getting Started
+Canvas API: Low-latency diagnostic tracking rendering.
 
-### Local Development
+GitHub Pages: Fast, public web deployment.
 
-1. Clone the repository:
-   ```bash
-   git clone [https://github.com/caspian1988/gaze_pilot_prototype-.git](https://github.com/caspian1988/gaze_pilot_prototype-.git)
+🎮 How to Test
+Open the Live Demo.
+
+Allow webcam access when prompted by your browser.
+
+Keep your head centered in the frame.
+
+Tilt or turn your head slightly up, down, left, or right to initiate direction vectors.
+
+👤 Author
+Ramin Baghirov
+
+GitHub: @caspian1988
