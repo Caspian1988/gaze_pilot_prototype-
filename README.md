@@ -1,41 +1,37 @@
-Gaze Pilot Prototype
-An experimental web-based directional control interface powered by real-time head-pose estimation and computer vision.
+# 🎯 Gaze Pilot Prototype
 
-🚀 Live Demo
-Test the live application directly in your web browser:
+> A real-time head-pose directional control and computer vision prototype for browser-native hands-free interface navigation.
 
-🔗 Gaze Pilot Live Demo
+[![DEMO LIVE TRACKER](https://img.shields.io/badge/DEMO-LIVE_TRACKER-brightgreen?style=for-the-badge&logo=github)](https://caspian1988.github.io/gaze_pilot_prototype-/)
 
-✨ Key Features
-Real-time Head-Pose Tracking: Detects pitch, yaw, and roll orientation directly from standard webcam feeds.
+---
 
-Directional Control Engine: Translates natural head movements into smooth directional control vectors.
+### 📍 Overview
 
-Browser-Native & Lightweight: Runs 100% client-side with zero external software or plugin installations.
+**Gaze Pilot** is an experimental, web-based directional control interface that translates natural head orientation (pitch, yaw, and roll) into real-time visual control vectors. Designed to run completely client-side, it eliminates the need for expensive eye-tracking hardware by utilizing standard webcam feeds and browser-native computer vision algorithms.
 
-Privacy-First Processing: Camera feeds stay local on your device—no video data is sent to external servers.
+---
 
-Visual Overlay: Real-time canvas tracking gives active feedback on control direction and head orientation.
+### 🚀 Live Demo
 
-🛠️ Built With
-HTML5 & CSS3: High-contrast, dark-mode responsive interface.
+Test the live application on your browser or mobile device:  
+🔗 **[Gaze Pilot Prototype](https://caspian1988.github.io/gaze_pilot_prototype-/)**
 
-Vanilla JavaScript (ES6+): Custom coordinate mapping and control vector algorithms.
+---
 
-Canvas API: Low-latency diagnostic tracking rendering.
+### 📌 Key Features
 
-GitHub Pages: Fast, public web deployment.
+* 🎯 **Real-time Head-Pose Tracking**: Captures dynamic pitch and yaw orientations directly from standard video feeds.
+* ⚡ **Low-Latency Vector Calculation**: Converts facial orientation changes into smooth onscreen navigation vectors.
+* 🔒 **Privacy-First Architecture**: Runs 100% locally in-browser—no camera imagery or video data is transmitted to external servers.
+* 📱 **Browser-Native Execution**: Zero software installation required; operates across modern mobile and desktop browsers.
+* 🎨 **Diagnostic Canvas Overlay**: Provides instant visual telemetry and direction indicators directly on screen.
 
-🎮 How to Test
-Open the Live Demo.
+---
 
-Allow webcam access when prompted by your browser.
+### 🛠️ Built With
 
-Keep your head centered in the frame.
-
-Tilt or turn your head slightly up, down, left, or right to initiate direction vectors.
-
-👤 Author
-Ramin Baghirov
-
-GitHub: @caspian1988
+* **HTML5 & CSS3**: High-contrast, responsive dark UI interface.
+* **Vanilla JavaScript**: Custom transformation matrices and direction-vector mapping logic.
+* **Canvas API**: High-FPS visual feedback rendering.
+* **GitHub Pages**: Fast, automated deployment pipeline.
