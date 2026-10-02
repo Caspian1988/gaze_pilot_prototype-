@@ -1,0 +1,725 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Aegis Vision // AI Anti-Tunnel Vision Gaze HUD </title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=JetBrains+Mono:wght@400;600;800&display=swap" rel="stylesheet">
+  
+  <!-- MediaPipe Face Mesh & Camera Utils -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+
+  <style>
+    :root {
+      --bg: #070a13;
+      --panel: #0d1527;
+      --border: #1e293b;
+      --cyan: #00f0ff;
+      --green: #10b981;
+      --amber: #f59e0b;
+      --red: #ef4444;
+      --text: #f8fafc;
+      --muted: #64748b;
+      --font-display: 'Orbitron', monospace;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: var(--font-mono);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 16px;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 900px;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-bottom: 12px;
+      margin-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .logo-badge {
+      font-family: var(--font-display);
+      font-weight: 900;
+      color: var(--cyan);
+      background: rgba(0, 240, 255, 0.1);
+      border: 1px solid var(--cyan);
+      padding: 4px 10px;
+      border-radius: 6px;
+      letter-spacing: 1px;
+    }
+
+    h1 {
+      font-family: var(--font-display);
+      font-size: 1.15rem;
+      letter-spacing: 1px;
+    }
+
+    .status-pill {
+      font-size: 0.75rem;
+      padding: 4px 10px;
+      border-radius: 9999px;
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid var(--green);
+      color: var(--green);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 10px var(--green);
+    }
+
+    /* HUD Video Stage */
+    .hud-stage {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 4 / 3;
+      max-height: 480px;
+      background: #000;
+      border: 2px solid var(--border);
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow: 0 0 30px rgba(0, 240, 255, 0.08);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* Video mirrored for natural cockpit feel */
+    video {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1);
+    }
+
+    canvas {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1);
+      z-index: 10;
+    }
+
+    /* Sci-Fi HUD Overlays */
+    .hud-overlay {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 20;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 16px;
+      transition: all 0.2s ease;
+    }
+
+    .hud-overlay.alert-red {
+      box-shadow: inset 0 0 60px rgba(239, 68, 68, 0.6);
+      border: 3px solid var(--red);
+      animation: pulseAlert 0.4s infinite alternate;
+    }
+
+    @keyframes pulseAlert {
+      from { background: rgba(239, 68, 68, 0.05); }
+      to { background: rgba(239, 68, 68, 0.25); }
+    }
+
+    .top-hud-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+    }
+
+    .gaze-target-box {
+      background: rgba(13, 21, 39, 0.85);
+      border: 1px solid var(--cyan);
+      border-radius: 8px;
+      padding: 8px 14px;
+      backdrop-filter: blur(8px);
+    }
+
+    .gaze-label {
+      font-size: 0.65rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .gaze-val {
+      font-family: var(--font-display);
+      font-size: 1.4rem;
+      font-weight: 700;
+      color: var(--cyan);
+      margin-top: 2px;
+    }
+
+    /* Circular Fixation Timer */
+    .timer-container {
+      background: rgba(13, 21, 39, 0.85);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 14px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      backdrop-filter: blur(8px);
+    }
+
+    .timer-val {
+      font-family: var(--font-display);
+      font-size: 1.4rem;
+      font-weight: 700;
+      color: var(--green);
+    }
+
+    /* Center Alert Banner */
+    .center-banner {
+      align-self: center;
+      text-align: center;
+      opacity: 0;
+      transform: scale(0.9);
+      transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+
+    .center-banner.active {
+      opacity: 1;
+      transform: scale(1);
+    }
+
+    .alert-banner-box {
+      background: rgba(239, 68, 68, 0.95);
+      color: #fff;
+      padding: 12px 24px;
+      border-radius: 8px;
+      font-family: var(--font-display);
+      font-weight: 900;
+      font-size: 1.1rem;
+      letter-spacing: 1px;
+      box-shadow: 0 0 30px rgba(239, 68, 68, 0.8);
+      border: 2px solid #fff;
+    }
+
+    .alert-subtext {
+      font-size: 0.8rem;
+      font-family: var(--font-mono);
+      font-weight: 600;
+      margin-top: 4px;
+      color: #ffe4e6;
+    }
+
+    /* Bottom HUD Vector Bar */
+    .bottom-hud-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+    }
+
+    .vector-meter {
+      background: rgba(13, 21, 39, 0.85);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 14px;
+      backdrop-filter: blur(8px);
+      width: 220px;
+    }
+
+    .vector-track {
+      width: 100%;
+      height: 6px;
+      background: #1e293b;
+      border-radius: 3px;
+      margin-top: 6px;
+      position: relative;
+    }
+
+    .vector-indicator {
+      position: absolute;
+      top: -3px;
+      left: 50%;
+      width: 12px;
+      height: 12px;
+      background: var(--cyan);
+      border-radius: 50%;
+      transform: translateX(-50%);
+      box-shadow: 0 0 10px var(--cyan);
+      transition: left 0.1s ease;
+    }
+
+    /* Metrics Grid */
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin-top: 16px;
+    }
+
+    .metric-card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px;
+      text-align: center;
+    }
+
+    .metric-title {
+      font-size: 0.75rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .metric-num {
+      font-family: var(--font-display);
+      font-size: 1.6rem;
+      font-weight: 700;
+      margin-top: 4px;
+      color: #fff;
+    }
+
+    /* Controls Panel */
+    .controls-panel {
+      display: flex;
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    button {
+      flex: 1;
+      padding: 14px;
+      border: none;
+      border-radius: 8px;
+      background: var(--cyan);
+      color: #000;
+      font-family: var(--font-mono);
+      font-weight: 800;
+      font-size: 0.95rem;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    button:hover {
+      box-shadow: 0 0 20px rgba(0, 240, 255, 0.4);
+    }
+
+    button.secondary {
+      background: #1e293b;
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+
+    button.secondary:hover {
+      background: #334155;
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <header>
+    <div class="brand">
+      <div class="logo-badge">AEGIS</div>
+      <div>
+        <h1>DRIVER GAZE COPILOT by Ramin</h1>
+        <div style="font-size: 0.7rem; color: var(--muted);">SMITH SYSTEM RULE #3 // 2.0s ANTI-TUNNEL VISION ENGINE</div>
+      </div>
+    </div>
+    <div id="aiStatusPill" class="status-pill">
+      <div class="status-dot"></div>
+      <span id="aiStatusText">Camera Standby</span>
+    </div>
+  </header>
+
+  <!-- Cockpit HUD Stage -->
+  <div class="hud-stage">
+    <video id="webcam" playsinline autoplay muted></video>
+    <canvas id="output_canvas"></canvas>
+
+    <!-- Sci-Fi HUD Layer -->
+    <div id="hudOverlay" class="hud-overlay">
+      <div class="top-hud-bar">
+        <div class="gaze-target-box">
+          <div class="gaze-label">Current Head Gaze</div>
+          <div id="gazeText" class="gaze-val">FORWARD</div>
+        </div>
+
+        <div class="timer-container">
+          <div>
+            <div class="gaze-label">Fixation Duration</div>
+            <div id="fixationTimer" class="timer-val">0.0s</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Center Alert -->
+      <div id="centerAlert" class="center-banner">
+        <div class="alert-banner-box">⚠️ TUNNEL VISION ALERT</div>
+        <div id="alertInstruction" class="alert-subtext">CHECK LEFT MIRROR & CROSSWALK NOW!</div>
+      </div>
+
+      <div class="bottom-hud-bar">
+        <div class="vector-meter">
+          <div style="display: flex; justify-content: space-between; font-size: 0.65rem; color: var(--muted);">
+            <span>LEFT</span>
+            <span>CENTER</span>
+            <span>RIGHT</span>
+          </div>
+          <div class="vector-track">
+            <div id="vectorIndicator" class="vector-indicator"></div>
+          </div>
+        </div>
+
+        <div style="font-size: 0.75rem; color: var(--muted); text-align: right;">
+          <div>THRESHOLD: <strong>2.0 SECONDS</strong></div>
+          <div id="audioStatusText" style="color: var(--cyan);">🔊 VOICE ADVISORY: ACTIVE</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Telematics Metrics -->
+  <div class="metrics-grid">
+    <div class="metric-card">
+      <div class="metric-title">Scan Discipline Score</div>
+      <div id="scanScoreVal" class="metric-num" style="color: var(--green);">100%</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-title">Tunnel Vision Incidents</div>
+      <div id="incidentsVal" class="metric-num" style="color: var(--cyan);">0</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-title">Max Stare Duration</div>
+      <div id="maxStareVal" class="metric-num">0.0s</div>
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <div class="controls-panel">
+    <button id="startBtn" onclick="toggleVisionEngine()">🚀 Activate Gaze Copilot</button>
+    <button class="secondary" onclick="calibrateCenter()">🎯 Calibrate Center View</button>
+    <button class="secondary" id="voiceToggleBtn" onclick="toggleVoice()">🔊 Voice: ON</button>
+  </div>
+</div>
+
+<script>
+  let camera = null;
+  let isRunning = false;
+  let voiceEnabled = true;
+
+  // Calibration and Tracking State
+  let centerCalibratedX = 0.50; // default center ratio
+  let currentDirection = 'FORWARD'; // 'FORWARD', 'LEFT', 'RIGHT'
+  let directionStartTime = null;
+  let fixationDuration = 0;
+  let maxStareTime = 0;
+
+  // Incident Tracking & Scoring
+  let tunnelVisionIncidents = 0;
+  let totalFixationChecks = 0;
+  let lastAlertSpokenTime = 0;
+
+  const videoElement = document.getElementById('webcam');
+  const canvasElement = document.getElementById('output_canvas');
+  const canvasCtx = canvasElement.getContext('2d');
+
+  // Synthesized Chime Engine
+  let audioCtx = null;
+  function playAlertChime() {
+    try {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+
+      const now = audioCtx.currentTime;
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(880, now);
+      osc.frequency.setValueAtTime(440, now + 0.15);
+      gain.gain.setValueAtTime(0.3, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
+
+      osc.start(now);
+      osc.stop(now + 0.5);
+    } catch(e) {}
+  }
+
+  // Voice Advisory
+  function speakVoiceAlert(text) {
+    if (!voiceEnabled || !('speechSynthesis' in window)) return;
+    const now = Date.now();
+    if (now - lastAlertSpokenTime < 3000) return; // 3-second speech debounce
+    lastAlertSpokenTime = now;
+
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = 1.15;
+    utterance.pitch = 1.0;
+    window.speechSynthesis.speak(utterance);
+  }
+
+  function toggleVoice() {
+    voiceEnabled = !voiceEnabled;
+    const btn = document.getElementById('voiceToggleBtn');
+    const status = document.getElementById('audioStatusText');
+    btn.innerText = voiceEnabled ? "🔊 Voice: ON" : "🔇 Voice: MUTED";
+    status.innerText = voiceEnabled ? "🔊 VOICE ADVISORY: ACTIVE" : "🔇 VOICE ADVISORY: MUTED";
+    status.style.color = voiceEnabled ? "var(--cyan)" : "var(--muted)";
+  }
+
+  // 1-Click Calibration
+  let latestNoseRatio = 0.50;
+  function calibrateCenter() {
+    centerCalibratedX = latestNoseRatio;
+    speakVoiceAlert("Center calibrated.");
+  }
+
+  // Initialize MediaPipe Face Mesh
+  const faceMesh = new FaceMesh({
+    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+  });
+
+  faceMesh.setOptions({
+    maxNumFaces: 1,
+    refineLandmarks: true,
+    minDetectionConfidence: 0.5,
+    minTrackingConfidence: 0.5
+  });
+
+  faceMesh.onResults(onFaceResults);
+
+  function onFaceResults(results) {
+    canvasElement.width = videoElement.videoWidth || 640;
+    canvasElement.height = videoElement.videoHeight || 480;
+    canvasCtx.save();
+    canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+    if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+      const landmarks = results.multiFaceLandmarks[0];
+
+      // Key landmark points:
+      // Left cheek: 234, Right cheek: 454, Nose tip: 1, Forehead: 10, Chin: 152
+      const nose = landmarks[1];
+      const leftCheek = landmarks[234];
+      const rightCheek = landmarks[454];
+
+      // Draw Sci-Fi Crosshair Reticle over Nose Tip
+      const nx = nose.x * canvasElement.width;
+      const ny = nose.y * canvasElement.height;
+
+      canvasCtx.strokeStyle = 'rgba(0, 240, 255, 0.7)';
+      canvasCtx.lineWidth = 1.5;
+      canvasCtx.beginPath();
+      canvasCtx.arc(nx, ny, 16, 0, 2 * Math.PI);
+      canvasCtx.stroke();
+
+      canvasCtx.beginPath();
+      canvasCtx.moveTo(nx - 22, ny);
+      canvasCtx.lineTo(nx + 22, ny);
+      canvasCtx.moveTo(nx, ny - 22);
+      canvasCtx.lineTo(nx, ny + 22);
+      canvasCtx.stroke();
+
+      // Eye Reticles
+      const leftPupil = landmarks[468] || landmarks[33];
+      const rightPupil = landmarks[473] || landmarks[263];
+      drawEyeReticle(leftPupil.x * canvasElement.width, leftPupil.y * canvasElement.height);
+      drawEyeReticle(rightPupil.x * canvasElement.width, rightPupil.y * canvasElement.height);
+
+      // Compute Yaw Ratio (horizontal balance of nose between cheeks)
+      const faceWidth = Math.abs(rightCheek.x - leftCheek.x);
+      latestNoseRatio = (nose.x - Math.min(leftCheek.x, rightCheek.x)) / faceWidth;
+
+      // Map to Head Turn Direction
+      // Since video is mirrored:
+      // Turning head to YOUR RIGHT moves nose toward the right in mirror
+      const deltaFromCenter = latestNoseRatio - centerCalibratedX;
+
+      // Update Vector HUD Indicator (-50% to +50% mapped to slider)
+      const vectorIndicator = document.getElementById('vectorIndicator');
+      const percent = Math.min(100, Math.max(0, (latestNoseRatio * 100)));
+      vectorIndicator.style.left = `${percent}%`;
+
+      let detectedDir = 'FORWARD';
+      // Threshold: 0.08 deviation indicates a clear head turn
+      if (deltaFromCenter > 0.08) {
+        detectedDir = 'RIGHT'; // Driver looking at right mirror / traffic
+      } else if (deltaFromCenter < -0.08) {
+        detectedDir = 'LEFT';  // Driver looking at left mirror / crosswalk
+      }
+
+      evaluateGazeDuration(detectedDir);
+    }
+    canvasCtx.restore();
+  }
+
+  function drawEyeReticle(x, y) {
+    canvasCtx.strokeStyle = 'rgba(16, 185, 129, 0.8)';
+    canvasCtx.lineWidth = 1.5;
+    canvasCtx.beginPath();
+    canvasCtx.arc(x, y, 7, 0, 2 * Math.PI);
+    canvasCtx.stroke();
+  }
+
+  function evaluateGazeDuration(newDirection) {
+    const now = Date.now();
+
+    if (newDirection !== currentDirection) {
+      currentDirection = newDirection;
+      directionStartTime = now;
+      fixationDuration = 0;
+    } else {
+      fixationDuration = (now - directionStartTime) / 1000;
+    }
+
+    if (fixationDuration > maxStareTime) {
+      maxStareTime = fixationDuration;
+      document.getElementById('maxStareVal').innerText = `${maxStareTime.toFixed(1)}s`;
+    }
+
+    // UI Updates
+    const gazeText = document.getElementById('gazeText');
+    const timerText = document.getElementById('fixationTimer');
+    const hudOverlay = document.getElementById('hudOverlay');
+    const centerAlert = document.getElementById('centerAlert');
+    const alertInstruction = document.getElementById('alertInstruction');
+
+    gazeText.innerText = currentDirection;
+    timerText.innerText = `${fixationDuration.toFixed(1)}s`;
+
+    // Normal forward or sweeping
+    if (currentDirection === 'FORWARD') {
+      gazeText.style.color = "var(--cyan)";
+      timerText.style.color = "var(--green)";
+      hudOverlay.className = "hud-overlay";
+      centerAlert.className = "center-banner";
+    } 
+    // Fixating Left or Right
+    else {
+      // 1.2s - Warning (Amber)
+      if (fixationDuration >= 1.2 && fixationDuration < 2.0) {
+        gazeText.style.color = "var(--amber)";
+        timerText.style.color = "var(--amber)";
+        hudOverlay.className = "hud-overlay";
+        centerAlert.className = "center-banner";
+      } 
+      // 2.0s - CRITICAL FIXATION ALERT (Red!)
+      else if (fixationDuration >= 2.0) {
+        gazeText.style.color = "var(--red)";
+        timerText.style.color = "var(--red)";
+        hudOverlay.className = "hud-overlay alert-red";
+        centerAlert.className = "center-banner active";
+
+        if (currentDirection === 'RIGHT') {
+          alertInstruction.innerText = "CHECK LEFT MIRROR & CYCLIST CROSSWALK!";
+          speakVoiceAlert("Warning! Check left mirror and crosswalk!");
+        } else {
+          alertInstruction.innerText = "CHECK RIGHT MIRROR & ONCOMING PEDESTRIANS!";
+          speakVoiceAlert("Warning! Check right mirror!");
+        }
+
+        playAlertChime();
+
+        // Count incident once per event
+        if (Math.floor(fixationDuration) === 2 && fixationDuration < 2.2) {
+          tunnelVisionIncidents++;
+          document.getElementById('incidentsVal').innerText = tunnelVisionIncidents;
+          updateScanScore();
+        }
+      }
+    }
+  }
+
+  function updateScanScore() {
+    // Score starts at 100, drops 5% per tunnel vision incident
+    const score = Math.max(0, 100 - (tunnelVisionIncidents * 5));
+    const scoreEl = document.getElementById('scanScoreVal');
+    scoreEl.innerText = `${score}%`;
+    if (score < 80) scoreEl.style.color = "var(--amber)";
+    if (score < 60) scoreEl.style.color = "var(--red)";
+  }
+
+  // Toggle Camera & Detection
+  async function toggleVisionEngine() {
+    const startBtn = document.getElementById('startBtn');
+    const statusText = document.getElementById('aiStatusText');
+
+    if (!isRunning) {
+      try {
+        statusText.innerText = "Loading MediaPipe AI...";
+        startBtn.disabled = true;
+
+        camera = new Camera(videoElement, {
+          onFrame: async () => {
+            await faceMesh.send({ image: videoElement });
+          },
+          width: 640,
+          height: 480
+        });
+
+        await camera.start();
+        isRunning = true;
+
+        startBtn.disabled = false;
+        startBtn.innerText = "🛑 Deactivate Copilot";
+        startBtn.style.background = "var(--red)";
+        startBtn.style.color = "#fff";
+        statusText.innerText = "AI Vision Active (Tracking 30 FPS)";
+
+        // Initialize Web Audio
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+
+        speakVoiceAlert("Gaze Copilot engaged. Scanning for tunnel vision.");
+      } catch (err) {
+        alert("Camera Access Error: " + err.message);
+        startBtn.disabled = false;
+        statusText.innerText = "Camera Access Denied";
+      }
+    } else {
+      if (camera) camera.stop();
+      isRunning = false;
+      startBtn.innerText = "🚀 Activate Gaze Copilot";
+      startBtn.style.background = "var(--cyan)";
+      startBtn.style.color = "#000";
+      statusText.innerText = "Camera Standby";
+      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+      document.getElementById('hudOverlay').className = "hud-overlay";
+      document.getElementById('centerAlert').className = "center-banner";
+    }
+  }
+</script>
+
+</body>
+</html>
