@@ -437,7 +437,8 @@
 
   // Calibration and Tracking State
   let centerCalibratedX = 0.50; // default center ratio
-  let currentDirection = 'FORWARD'; // 'FORWARD', 'LEFT', 'RIGHT'
+  let centerCalibratedY = 0.50; // default vertical center ratio for head drop
+  let currentDirection = 'FORWARD'; // 'FORWARD', 'LEFT', 'RIGHT', 'DOWN'
   let directionStartTime = null;
   let fixationDuration = 0;
   let maxStareTime = 0;
@@ -500,8 +501,10 @@
 
   // 1-Click Calibration
   let latestNoseRatio = 0.50;
+  let latestPitchRatio = 0.50;
   function calibrateCenter() {
     centerCalibratedX = latestNoseRatio;
+    centerCalibratedY = latestPitchRatio;
     speakVoiceAlert("Center calibrated.");
   }
 
@@ -533,6 +536,8 @@
       const nose = landmarks[1];
       const leftCheek = landmarks[234];
       const rightCheek = landmarks[454];
+      const forehead = landmarks[10];
+      const chin = landmarks[152];
 
       // Draw Sci-Fi Crosshair Reticle over Nose Tip
       const nx = nose.x * canvasElement.width;
@@ -557,14 +562,21 @@
       drawEyeReticle(leftPupil.x * canvasElement.width, leftPupil.y * canvasElement.height);
       drawEyeReticle(rightPupil.x * canvasElement.width, rightPupil.y * canvasElement.height);
 
-      // Compute Yaw Ratio (horizontal balance of nose between cheeks)
+      // Compute yaw and pitch ratios relative to the face dimensions.
       const faceWidth = Math.abs(rightCheek.x - leftCheek.x);
-      latestNoseRatio = (nose.x - Math.min(leftCheek.x, rightCheek.x)) / faceWidth;
+      if (faceWidth > 0) {
+        latestNoseRatio = (nose.x - Math.min(leftCheek.x, rightCheek.x)) / faceWidth;
+      }
+      const faceHeight = Math.abs(chin.y - forehead.y);
+      if (faceHeight > 0) {
+        latestPitchRatio = (nose.y - Math.min(forehead.y, chin.y)) / faceHeight;
+      }
 
       // Map to Head Turn Direction
       // Since video is mirrored:
       // Turning head to YOUR RIGHT moves nose toward the right in mirror
       const deltaFromCenter = latestNoseRatio - centerCalibratedX;
+      const deltaPitch = latestPitchRatio - centerCalibratedY;
 
       // Update Vector HUD Indicator (-50% to +50% mapped to slider)
       const vectorIndicator = document.getElementById('vectorIndicator');
@@ -572,8 +584,9 @@
       vectorIndicator.style.left = `${percent}%`;
 
       let detectedDir = 'FORWARD';
-      // Threshold: 0.08 deviation indicates a clear head turn
-      if (deltaFromCenter > 0.08) {
+      if (deltaPitch > 0.08) {
+        detectedDir = 'DOWN';
+      } else if (deltaFromCenter > 0.08) {
         detectedDir = 'RIGHT'; // Driver looking at right mirror / traffic
       } else if (deltaFromCenter < -0.08) {
         detectedDir = 'LEFT';  // Driver looking at left mirror / crosswalk
@@ -625,7 +638,7 @@
       hudOverlay.className = "hud-overlay";
       centerAlert.className = "center-banner";
     } 
-    // Fixating Left or Right
+    // Looking away from forward
     else {
       // 1.2s - Warning (Amber)
       if (fixationDuration >= 1.2 && fixationDuration < 2.0) {
@@ -641,7 +654,10 @@
         hudOverlay.className = "hud-overlay alert-red";
         centerAlert.className = "center-banner active";
 
-        if (currentDirection === 'RIGHT') {
+        if (currentDirection === 'DOWN') {
+          alertInstruction.innerText = "HEAD DROP DETECTED! HEAD UP & SCAN ROAD!";
+          speakVoiceAlert("Warning! Keep your eyes on the road! Head up!");
+        } else if (currentDirection === 'RIGHT') {
           alertInstruction.innerText = "CHECK LEFT MIRROR & CYCLIST CROSSWALK!";
           speakVoiceAlert("Warning! Check left mirror and crosswalk!");
         } else {
