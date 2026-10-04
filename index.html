@@ -10,6 +10,9 @@
   <!-- MediaPipe Face Mesh & Camera Utils -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+  <!-- TensorFlow.js and COCO-SSD model -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
 
   <style>
     :root {
@@ -344,6 +347,25 @@
 </head>
 <body>
 
+<div id="phone-alert" style="
+  display: none;
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: #ef4444;
+  color: white;
+  padding: 12px 24px;
+  border-radius: 8px;
+  font-weight: bold;
+  font-family: monospace;
+  box-shadow: 0 0 20px rgba(239, 68, 68, 0.8);
+  z-index: 9999;
+  letter-spacing: 1px;
+">
+  ⚠️ DISTRACTION ALERT: MOBILE DEVICE DETECTED
+</div>
+
 <div class="container">
   <header>
     <div class="brand">
@@ -434,6 +456,8 @@
   let camera = null;
   let isRunning = false;
   let voiceEnabled = true;
+  let objectModel = null;
+  let detectionFrameId = null;
 
   // Calibration and Tracking State
   let centerCalibratedX = 0.50; // default center ratio
@@ -686,6 +710,37 @@
     if (score < 60) scoreEl.style.color = "var(--red)";
   }
 
+  async function initPhoneDetection() {
+    if (!objectModel) {
+      console.log("Loading Object Detection Model...");
+      objectModel = await cocoSsd.load();
+      console.log("Phone Detection Ready!");
+    }
+    if (isRunning) detectionFrameId = requestAnimationFrame(detectObjects);
+  }
+
+  async function detectObjects() {
+    if (!isRunning || !objectModel) return;
+
+    try {
+      if (videoElement.readyState >= 4) {
+        const predictions = await objectModel.detect(videoElement);
+        if (!isRunning) return;
+
+        const phoneDetected = predictions.some(
+          prediction => prediction.class === 'cell phone' && prediction.score > 0.55
+        );
+        document.getElementById('phone-alert').style.display = phoneDetected ? 'block' : 'none';
+      }
+    } catch (err) {
+      console.error("Phone detection failed:", err);
+      document.getElementById('aiStatusText').innerText = "Phone Detection Error";
+      return;
+    }
+
+    if (isRunning) detectionFrameId = requestAnimationFrame(detectObjects);
+  }
+
   // Toggle Camera & Detection
   async function toggleVisionEngine() {
     const startBtn = document.getElementById('startBtn');
@@ -693,9 +748,15 @@
 
     if (!isRunning) {
       try {
-        statusText.innerText = "Loading MediaPipe AI...";
-        startBtn.disabled = true;
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          throw new Error("Camera access is unavailable. Open this page over HTTPS or from localhost.");
+        }
+        if (typeof Camera === 'undefined') {
+          throw new Error("The camera library did not load. Check your internet connection and reload the page.");
+        }
 
+        statusText.innerText = "Requesting camera access...";
+        startBtn.disabled = true;
         camera = new Camera(videoElement, {
           onFrame: async () => {
             await faceMesh.send({ image: videoElement });
@@ -711,21 +772,34 @@
         startBtn.innerText = "🛑 Deactivate Copilot";
         startBtn.style.background = "var(--red)";
         startBtn.style.color = "#fff";
-        statusText.innerText = "AI Vision Active (Tracking 30 FPS)";
+        statusText.innerText = "Camera active; loading phone detection...";
 
         // Initialize Web Audio
         if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         if (audioCtx.state === 'suspended') audioCtx.resume();
 
         speakVoiceAlert("Gaze Copilot engaged. Scanning for tunnel vision.");
+
+        initPhoneDetection().then(() => {
+          if (isRunning) statusText.innerText = "AI Vision Active (Tracking 30 FPS)";
+        }).catch(err => {
+          console.error("Phone detection model failed to load:", err);
+          if (isRunning) statusText.innerText = "Camera active; phone detection unavailable";
+        });
       } catch (err) {
-        alert("Camera Access Error: " + err.message);
+        if (camera) camera.stop();
+        camera = null;
+        isRunning = false;
+        alert("Camera startup failed: " + err.message);
         startBtn.disabled = false;
-        statusText.innerText = "Camera Access Denied";
+        statusText.innerText = "Camera Error: " + err.message;
       }
     } else {
       if (camera) camera.stop();
       isRunning = false;
+      if (detectionFrameId !== null) cancelAnimationFrame(detectionFrameId);
+      detectionFrameId = null;
+      document.getElementById('phone-alert').style.display = 'none';
       startBtn.innerText = "🚀 Activate Gaze Copilot";
       startBtn.style.background = "var(--cyan)";
       startBtn.style.color = "#000";
