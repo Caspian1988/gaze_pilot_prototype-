@@ -309,6 +309,30 @@
       color: #fff;
     }
 
+    #drowsy-alert {
+      display: none;
+      position: fixed;
+      top: 70px;
+      left: 50%;
+      transform: translateX(-50%);
+      background-color: #dc2626;
+      color: #fff;
+      padding: 14px 28px;
+      border-radius: 8px;
+      font-weight: 800;
+      font-family: var(--font-mono);
+      box-shadow: 0 0 25px rgba(220, 38, 38, 0.9);
+      z-index: 9999;
+      letter-spacing: 1.5px;
+      text-align: center;
+      animation: drowsyPulse 0.5s infinite alternate;
+    }
+
+    @keyframes drowsyPulse {
+      from { opacity: 1; }
+      to { opacity: 0.8; }
+    }
+
     /* Controls Panel */
     .controls-panel {
       display: flex;
@@ -364,6 +388,10 @@
   letter-spacing: 1px;
 ">
   ⚠️ DISTRACTION ALERT: MOBILE DEVICE DETECTED
+</div>
+
+<div id="drowsy-alert" role="alert" aria-live="assertive">
+  🚨 CRITICAL SAFETY ALERT: PROLONGED EYE CLOSURE DETECTED (3s+)
 </div>
 
 <div class="container">
@@ -471,6 +499,11 @@
   let tunnelVisionIncidents = 0;
   let totalFixationChecks = 0;
   let lastAlertSpokenTime = 0;
+  let eyeClosedStartTime = null;
+  let drowsyAlertTriggered = false;
+  let lastEyeClosureLogTenth = -1;
+  const DROWSY_THRESHOLD_SECONDS = 3.0;
+  const EAR_CLOSED_THRESHOLD = 0.20;
 
   const videoElement = document.getElementById('webcam');
   const canvasElement = document.getElementById('output_canvas');
@@ -563,6 +596,8 @@
       const forehead = landmarks[10];
       const chin = landmarks[152];
 
+      updateDrowsyAlert(landmarks);
+
       // Draw Sci-Fi Crosshair Reticle over Nose Tip
       const nx = nose.x * canvasElement.width;
       const ny = nose.y * canvasElement.height;
@@ -617,8 +652,67 @@
       }
 
       evaluateGazeDuration(detectedDir);
+    } else {
+      eyeClosedStartTime = null;
+      drowsyAlertTriggered = false;
+      lastEyeClosureLogTenth = -1;
+      document.getElementById('drowsy-alert').style.display = 'none';
     }
     canvasCtx.restore();
+  }
+
+  function getDistance(point1, point2) {
+    return Math.hypot(point1.x - point2.x, point1.y - point2.y);
+  }
+
+  function calculateEAR(eyeLandmarks) {
+    if (eyeLandmarks.length !== 6 || !eyeLandmarks.every(Boolean)) {
+      return null;
+    }
+
+    const vertical1 = getDistance(eyeLandmarks[1], eyeLandmarks[5]);
+    const vertical2 = getDistance(eyeLandmarks[2], eyeLandmarks[4]);
+    const horizontal = getDistance(eyeLandmarks[0], eyeLandmarks[3]);
+    if (horizontal === 0) return null;
+
+    return (vertical1 + vertical2) / (2 * horizontal);
+  }
+
+  function checkDrowsiness(leftEyePoints, rightEyePoints) {
+    const leftEAR = calculateEAR(leftEyePoints);
+    const rightEAR = calculateEAR(rightEyePoints);
+    const drowsyBanner = document.getElementById('drowsy-alert');
+
+    if (leftEAR === null || rightEAR === null ||
+        (leftEAR + rightEAR) / 2 >= EAR_CLOSED_THRESHOLD) {
+      eyeClosedStartTime = null;
+      drowsyAlertTriggered = false;
+      lastEyeClosureLogTenth = -1;
+      drowsyBanner.style.display = 'none';
+      return;
+    }
+
+    if (eyeClosedStartTime === null) eyeClosedStartTime = performance.now();
+    const duration = (performance.now() - eyeClosedStartTime) / 1000;
+    const durationTenth = Math.floor(duration * 10);
+    if (durationTenth !== lastEyeClosureLogTenth) {
+      console.log(`Eyes Closed Duration: ${duration.toFixed(1)}s`);
+      lastEyeClosureLogTenth = durationTenth;
+    }
+
+    if (!drowsyAlertTriggered && duration >= DROWSY_THRESHOLD_SECONDS) {
+      drowsyAlertTriggered = true;
+      drowsyBanner.style.display = 'block';
+      playAlertChime();
+      speakVoiceAlert('Critical safety alert. Prolonged eye closure detected. Please stop driving safely.');
+    }
+  }
+
+  function updateDrowsyAlert(landmarks) {
+    checkDrowsiness(
+      [33, 160, 158, 133, 153, 144].map(index => landmarks[index]),
+      [362, 385, 387, 263, 373, 380].map(index => landmarks[index])
+    );
   }
 
   function drawEyeReticle(x, y) {
@@ -800,6 +894,10 @@
       if (detectionFrameId !== null) cancelAnimationFrame(detectionFrameId);
       detectionFrameId = null;
       document.getElementById('phone-alert').style.display = 'none';
+      document.getElementById('drowsy-alert').style.display = 'none';
+      eyeClosedStartTime = null;
+      drowsyAlertTriggered = false;
+      lastEyeClosureLogTenth = -1;
       startBtn.innerText = "🚀 Activate Gaze Copilot";
       startBtn.style.background = "var(--cyan)";
       startBtn.style.color = "#000";
