@@ -13,6 +13,8 @@
   <!-- TensorFlow.js and COCO-SSD model -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/hand-pose-detection"></script>
 
   <style>
     :root {
@@ -485,7 +487,10 @@
   let isRunning = false;
   let voiceEnabled = true;
   let objectModel = null;
+  let handPoseDetector = null;
   let detectionFrameId = null;
+  let handsOffStartTime = null;
+  let handsOffAlertActive = false;
 
   // Calibration and Tracking State
   let centerCalibratedX = 0.50; // default center ratio
@@ -804,32 +809,106 @@
     if (score < 60) scoreEl.style.color = "var(--red)";
   }
 
+  async function initHandTracking() {
+    const model = handPoseDetection.SupportedModels.MediaPipeHands;
+    handPoseDetector = await handPoseDetection.createDetector(model, {
+      runtime: 'mediapipe',
+      solutionPath: 'https://cdn.jsdelivr.net/npm/@mediapipe/hands',
+      modelType: 'lite',
+      maxHands: 2
+    });
+    console.log("Hand Tracking Ready!");
+  }
+
+  function setHandsOffAlert(active) {
+    if (handsOffAlertActive === active) return;
+
+    handsOffAlertActive = active;
+    const statusText = document.getElementById('aiStatusText');
+    const statusPill = document.getElementById('aiStatusPill');
+    const statusDot = statusPill.querySelector('.status-dot');
+
+    if (active) {
+      statusText.innerText = "CRITICAL: HANDS OFF WHEEL";
+      statusPill.style.background = "rgba(239, 68, 68, 0.15)";
+      statusPill.style.borderColor = "var(--red)";
+      statusPill.style.color = "var(--red)";
+      statusDot.style.background = "var(--red)";
+      statusDot.style.boxShadow = "0 0 10px var(--red)";
+      playAlertChime();
+      speakVoiceAlert("Critical safety alert. Place both hands on the steering wheel.");
+    } else {
+      statusText.innerText = isRunning ? "AI Vision Active (Tracking 30 FPS)" : "Camera Standby";
+      statusPill.style.background = "";
+      statusPill.style.borderColor = "";
+      statusPill.style.color = "";
+      statusDot.style.background = "";
+      statusDot.style.boxShadow = "";
+    }
+  }
+
+  async function detectHands(video) {
+    if (!handPoseDetector || video.readyState < 4 || !video.videoHeight) return;
+
+    const hands = await handPoseDetector.estimateHands(video);
+    const wheelZoneYMin = video.videoHeight * 0.5;
+    const handsOnWheel = hands.filter(hand => {
+      const wrist = hand.keypoints.find(keypoint => keypoint.name === 'wrist');
+      return wrist && wrist.y > wheelZoneYMin;
+    }).length;
+
+    if (handsOnWheel < 2) {
+      if (handsOffStartTime === null) handsOffStartTime = performance.now();
+      if ((performance.now() - handsOffStartTime) / 1000 > 2.0) {
+        setHandsOffAlert(true);
+      }
+    } else {
+      handsOffStartTime = null;
+      setHandsOffAlert(false);
+    }
+  }
+
   async function initPhoneDetection() {
     if (!objectModel) {
       console.log("Loading Object Detection Model...");
       objectModel = await cocoSsd.load();
       console.log("Phone Detection Ready!");
     }
-    if (isRunning) detectionFrameId = requestAnimationFrame(detectObjects);
   }
 
   async function detectObjects() {
-    if (!isRunning || !objectModel) return;
+    if (!isRunning) return;
 
-    try {
-      if (videoElement.readyState >= 4) {
-        const predictions = await objectModel.detect(videoElement);
-        if (!isRunning) return;
+    if (videoElement.readyState >= 4) {
+      if (objectModel) {
+        try {
+          const predictions = await objectModel.detect(videoElement);
+          if (!isRunning) return;
 
-        const phoneDetected = predictions.some(
-          prediction => prediction.class === 'cell phone' && prediction.score > 0.55
-        );
-        document.getElementById('phone-alert').style.display = phoneDetected ? 'block' : 'none';
+          const phoneDetected = predictions.some(
+            prediction => prediction.class === 'cell phone' && prediction.score > 0.55
+          );
+          document.getElementById('phone-alert').style.display = phoneDetected ? 'block' : 'none';
+        } catch (err) {
+          console.error("Phone detection failed:", err);
+          objectModel = null;
+          if (!handsOffAlertActive) {
+            document.getElementById('aiStatusText').innerText = "Phone Detection Error";
+          }
+        }
       }
-    } catch (err) {
-      console.error("Phone detection failed:", err);
-      document.getElementById('aiStatusText').innerText = "Phone Detection Error";
-      return;
+
+      if (handPoseDetector) {
+        try {
+          await detectHands(videoElement);
+        } catch (err) {
+          console.error("Hand detection failed:", err);
+          handPoseDetector = null;
+          handsOffStartTime = null;
+          setHandsOffAlert(false);
+          document.getElementById('aiStatusText').innerText = "Hand Detection Error";
+        }
+      }
     }
 
     if (isRunning) detectionFrameId = requestAnimationFrame(detectObjects);
@@ -866,7 +945,7 @@
         startBtn.innerText = "🛑 Deactivate Copilot";
         startBtn.style.background = "var(--red)";
         startBtn.style.color = "#fff";
-        statusText.innerText = "Camera active; loading phone detection...";
+        statusText.innerText = "Camera active; loading safety models...";
 
         // Initialize Web Audio
         if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -874,12 +953,20 @@
 
         speakVoiceAlert("Gaze Copilot engaged. Scanning for tunnel vision.");
 
-        initPhoneDetection().then(() => {
-          if (isRunning) statusText.innerText = "AI Vision Active (Tracking 30 FPS)";
-        }).catch(err => {
-          console.error("Phone detection model failed to load:", err);
-          if (isRunning) statusText.innerText = "Camera active; phone detection unavailable";
-        });
+        const modelLoads = await Promise.allSettled([
+          initPhoneDetection(),
+          initHandTracking()
+        ]);
+        if (!isRunning) return;
+        if (modelLoads.some(result => result.status === 'rejected')) {
+          modelLoads
+            .filter(result => result.status === 'rejected')
+            .forEach(result => console.error("Safety model failed to load:", result.reason));
+          statusText.innerText = "Camera active; a safety model is unavailable";
+        } else {
+          statusText.innerText = "AI Vision Active (Tracking 30 FPS)";
+        }
+        detectionFrameId = requestAnimationFrame(detectObjects);
       } catch (err) {
         if (camera) camera.stop();
         camera = null;
@@ -895,6 +982,8 @@
       detectionFrameId = null;
       document.getElementById('phone-alert').style.display = 'none';
       document.getElementById('drowsy-alert').style.display = 'none';
+      handsOffStartTime = null;
+      setHandsOffAlert(false);
       eyeClosedStartTime = null;
       drowsyAlertTriggered = false;
       lastEyeClosureLogTenth = -1;
