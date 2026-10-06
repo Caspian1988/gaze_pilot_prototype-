@@ -10,6 +10,9 @@
   <!-- MediaPipe Face Mesh & Camera Utils -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+  <!-- TensorFlow.js & COCO-SSD for Mobile Device Distraction Detection -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
 
   <style>
     :root {
@@ -97,7 +100,7 @@
     }
 
     /* Danger Banners */
-    #drowsy-alert {
+    #phone-alert, #drowsy-alert {
       display: none;
       width: 100%;
       background-color: var(--red);
@@ -358,6 +361,7 @@
 <body>
 
 <div class="container">
+  <div id="phone-alert">📱 DISTRACTION ALERT: MOBILE DEVICE DETECTED</div>
   <div id="drowsy-alert">🚨 CRITICAL SAFETY ALERT: PROLONGED EYE CLOSURE DETECTED (MICROSLEEP)</div>
 
   <header>
@@ -447,6 +451,11 @@
   let isRunning = false;
   let voiceEnabled = true;
 
+  // Mobile Device Object Model
+  let objectModel = null;
+  let isCheckingPhone = false;
+  let phoneCheckInterval = null;
+
   // Calibration and Tracking State
   let centerCalibratedX = 0.50; 
   let centerCalibratedY = 0.60;
@@ -531,6 +540,27 @@
     directionStartTime = Date.now();
     alertFiredForCurrentGaze = false;
     speakVoiceAlert("Center calibrated.");
+  }
+
+  // Mobile Device Distraction Detector (Throttled to run smoothly every 1.2s)
+  async function checkPhoneDistraction() {
+    if (!isRunning || !objectModel || isCheckingPhone || videoElement.readyState < 2) return;
+    isCheckingPhone = true;
+    try {
+      const predictions = await objectModel.detect(videoElement);
+      const phoneDetected = predictions.some(p => p.class === 'cell phone' && p.score >= 0.48);
+      const phoneBanner = document.getElementById('phone-alert');
+      if (phoneDetected) {
+        phoneBanner.style.display = 'block';
+        playAlertChime();
+        speakVoiceAlert("Warning! Mobile device detected! Eyes on the road!");
+      } else {
+        phoneBanner.style.display = 'none';
+      }
+    } catch(e) {
+    } finally {
+      isCheckingPhone = false;
+    }
   }
 
   // Initialize MediaPipe Face Mesh
@@ -808,6 +838,19 @@
         statusText.innerText = "AI Vision Active (Tracking 30 FPS)";
 
         speakVoiceAlert("Gaze Copilot engaged. Scanning for tunnel vision.");
+
+        // Start Throttled Mobile Device Detection in background
+        if (typeof cocoSsd !== 'undefined') {
+          if (!objectModel) {
+            cocoSsd.load().then(model => {
+              objectModel = model;
+              if (isRunning) phoneCheckInterval = setInterval(checkPhoneDistraction, 1200);
+            }).catch(e => console.warn("COCO-SSD phone detection error:", e));
+          } else {
+            phoneCheckInterval = setInterval(checkPhoneDistraction, 1200);
+          }
+        }
+
       } catch (err) {
         if (camera) camera.stop();
         isRunning = false;
@@ -817,7 +860,9 @@
       }
     } else {
       if (camera) camera.stop();
+      if (phoneCheckInterval) clearInterval(phoneCheckInterval);
       isRunning = false;
+      document.getElementById('phone-alert').style.display = 'none';
       document.getElementById('drowsy-alert').style.display = 'none';
       eyeClosedStartTime = null;
       drowsyAlertTriggered = false;
