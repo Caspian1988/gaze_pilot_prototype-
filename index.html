@@ -10,9 +10,6 @@
   <!-- MediaPipe Face Mesh & Camera Utils -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
-  <!-- Optional Lightweight COCO-SSD for Phone Detection -->
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
 
   <style>
     :root {
@@ -100,24 +97,25 @@
     }
 
     /* Danger Banners */
-    #phone-alert, #drowsy-alert {
+    #drowsy-alert {
       display: none;
       width: 100%;
       background-color: var(--red);
       color: white;
-      padding: 10px 16px;
+      padding: 12px 16px;
       border-radius: 8px;
       font-weight: bold;
       text-align: center;
       margin-bottom: 12px;
-      box-shadow: 0 0 20px rgba(239, 68, 68, 0.6);
+      box-shadow: 0 0 25px rgba(239, 68, 68, 0.8);
       letter-spacing: 1px;
-      animation: flashAlert 0.5s infinite alternate;
+      border: 2px solid #fff;
+      animation: flashAlert 0.4s infinite alternate;
     }
 
     @keyframes flashAlert {
-      from { opacity: 0.85; }
-      to { opacity: 1.0; }
+      from { opacity: 0.85; transform: scale(0.99); }
+      to { opacity: 1.0; transform: scale(1.0); }
     }
 
     /* HUD Video Stage */
@@ -166,7 +164,7 @@
     }
 
     .hud-overlay.alert-red {
-      box-shadow: inset 0 0 60px rgba(239, 68, 68, 0.7);
+      box-shadow: inset 0 0 70px rgba(239, 68, 68, 0.7);
       border: 3px solid var(--red);
       animation: pulseAlert 0.4s infinite alternate;
     }
@@ -199,7 +197,7 @@
 
     .gaze-val {
       font-family: var(--font-display);
-      font-size: 1.4rem;
+      font-size: 1.3rem;
       font-weight: 700;
       color: var(--cyan);
       margin-top: 2px;
@@ -251,7 +249,7 @@
       font-size: 0.85rem;
       font-family: var(--font-mono);
       font-weight: bold;
-      margin-top: 4px;
+      margin-top: 6px;
       color: #ffe4e6;
     }
 
@@ -360,8 +358,7 @@
 <body>
 
 <div class="container">
-  <div id="phone-alert">📱 DISTRACTION ALERT: MOBILE DEVICE DETECTED</div>
-  <div id="drowsy-alert">🚨 CRITICAL ALERT: PROLONGED EYE CLOSURE DETECTED</div>
+  <div id="drowsy-alert">🚨 CRITICAL SAFETY ALERT: PROLONGED EYE CLOSURE DETECTED (MICROSLEEP)</div>
 
   <header>
     <div class="brand">
@@ -415,7 +412,7 @@
 
         <div style="font-size: 0.75rem; color: var(--muted); text-align: right;">
           <div>THRESHOLD: <strong>2.0 SECONDS</strong></div>
-          <div id="audioStatusText" style="color: var(--cyan);">🔊 VOICE ADVISORY: ACTIVE</div>
+          <div id="audioStatusText" style="color: var(--cyan);">🔊 VOICE & CHIME: ACTIVE</div>
         </div>
       </div>
     </div>
@@ -449,24 +446,27 @@
   let camera = null;
   let isRunning = false;
   let voiceEnabled = true;
-  let objectModel = null;
-  let phoneCheckInterval = null;
 
   // Calibration and Tracking State
-  let centerCalibratedX = 0.50;
-  let centerCalibratedY = 0.60; // Anatomical human nose center relative to forehead & chin
+  let centerCalibratedX = 0.50; 
+  let centerCalibratedY = 0.60;
   let currentDirection = 'FORWARD'; // 'FORWARD', 'LEFT', 'RIGHT', 'DOWN'
   let directionStartTime = null;
   let fixationDuration = 0;
   let maxStareTime = 0;
+  let alertFiredForCurrentGaze = false;
+
+  // Smoothing filters (removes camera & head jitter)
+  let smoothedDeltaX = 0;
+  let smoothedDeltaPitch = 0;
 
   // Incident Tracking & Scoring
   let tunnelVisionIncidents = 0;
   let lastAlertSpokenTime = 0;
   let eyeClosedStartTime = null;
   let drowsyAlertTriggered = false;
-  const DROWSY_THRESHOLD_SECONDS = 2.0; // 2 seconds eyes closed triggers microsleep alert
-  const EAR_CLOSED_THRESHOLD = 0.19;
+  const DROWSY_THRESHOLD_SECONDS = 1.8;
+  const EAR_CLOSED_THRESHOLD = 0.20;
 
   const videoElement = document.getElementById('webcam');
   const canvasElement = document.getElementById('output_canvas');
@@ -500,7 +500,7 @@
   function speakVoiceAlert(text) {
     if (!voiceEnabled || !('speechSynthesis' in window)) return;
     const now = Date.now();
-    if (now - lastAlertSpokenTime < 3000) return; // 3-second speech debounce
+    if (now - lastAlertSpokenTime < 2800) return;
     lastAlertSpokenTime = now;
 
     window.speechSynthesis.cancel();
@@ -515,7 +515,7 @@
     const btn = document.getElementById('voiceToggleBtn');
     const status = document.getElementById('audioStatusText');
     btn.innerText = voiceEnabled ? "🔊 Voice: ON" : "🔇 Voice: MUTED";
-    status.innerText = voiceEnabled ? "🔊 VOICE ADVISORY: ACTIVE" : "🔇 VOICE ADVISORY: MUTED";
+    status.innerText = voiceEnabled ? "🔊 VOICE & CHIME: ACTIVE" : "🔇 VOICE & CHIME: MUTED";
     status.style.color = voiceEnabled ? "var(--cyan)" : "var(--muted)";
   }
 
@@ -525,6 +525,11 @@
   function calibrateCenter() {
     centerCalibratedX = latestNoseRatioX;
     centerCalibratedY = latestPitchRatioY;
+    smoothedDeltaX = 0;
+    smoothedDeltaPitch = 0;
+    currentDirection = 'FORWARD';
+    directionStartTime = Date.now();
+    alertFiredForCurrentGaze = false;
     speakVoiceAlert("Center calibrated.");
   }
 
@@ -558,7 +563,7 @@
       const forehead = landmarks[10];
       const chin = landmarks[152];
 
-      // Check Eye Closure (Drowsiness)
+      // Check Eye Closure (Drowsiness / Microsleep)
       checkDrowsiness(landmarks);
 
       // Draw Sci-Fi Crosshair Reticle over Nose Tip
@@ -584,7 +589,7 @@
       drawEyeReticle(leftPupil.x * canvasElement.width, leftPupil.y * canvasElement.height);
       drawEyeReticle(rightPupil.x * canvasElement.width, rightPupil.y * canvasElement.height);
 
-      // Compute yaw and pitch ratios
+      // Compute raw yaw and pitch
       const faceWidth = Math.abs(rightCheek.x - leftCheek.x);
       if (faceWidth > 0) {
         latestNoseRatioX = (nose.x - Math.min(leftCheek.x, rightCheek.x)) / faceWidth;
@@ -594,28 +599,36 @@
         latestPitchRatioY = (nose.y - Math.min(forehead.y, chin.y)) / faceHeight;
       }
 
-      const deltaX = latestNoseRatioX - centerCalibratedX;
-      const deltaPitch = latestPitchRatioY - centerCalibratedY;
+      const rawDeltaX = latestNoseRatioX - centerCalibratedX;
+      const rawDeltaPitch = latestPitchRatioY - centerCalibratedY;
+
+      // Exponential Moving Average (EMA) to eliminate frame jitter
+      smoothedDeltaX = (smoothedDeltaX * 0.7) + (rawDeltaX * 0.3);
+      smoothedDeltaPitch = (smoothedDeltaPitch * 0.7) + (rawDeltaPitch * 0.3);
 
       // Update Vector HUD Indicator
       const vectorIndicator = document.getElementById('vectorIndicator');
-      // Mirrored mapping for HUD track
       const percent = Math.min(100, Math.max(0, (1 - latestNoseRatioX) * 100));
       vectorIndicator.style.left = `${percent}%`;
 
-      // FIXED DIRECTION MAPPING:
-      // When driver looks to THEIR LEFT, nose moves towards left cheek (deltaX > 0.07)
-      // When driver looks to THEIR RIGHT, nose moves towards right cheek (deltaX < -0.07)
-      let detectedDir = 'FORWARD';
-      if (deltaPitch > 0.11) {
-        detectedDir = 'DOWN'; // Head dropped looking at lap / floor
-      } else if (deltaX > 0.07) {
-        detectedDir = 'LEFT'; // Driver looking LEFT
-      } else if (deltaX < -0.07) {
-        detectedDir = 'RIGHT'; // Driver looking RIGHT
+      // HYSTERESIS STATE MACHINE:
+      // When looking LEFT: smoothedDeltaX > 0.055
+      // When looking RIGHT: smoothedDeltaX < -0.055
+      // When looking DOWN: smoothedDeltaPitch > 0.08
+      let nextDir = currentDirection;
+      if (currentDirection === 'FORWARD') {
+        if (smoothedDeltaPitch > 0.08) nextDir = 'DOWN';
+        else if (smoothedDeltaX > 0.055) nextDir = 'LEFT';
+        else if (smoothedDeltaX < -0.055) nextDir = 'RIGHT';
+      } else if (currentDirection === 'DOWN') {
+        if (smoothedDeltaPitch < 0.04) nextDir = 'FORWARD';
+      } else if (currentDirection === 'LEFT') {
+        if (smoothedDeltaX < 0.025) nextDir = 'FORWARD';
+      } else if (currentDirection === 'RIGHT') {
+        if (smoothedDeltaX > -0.025) nextDir = 'FORWARD';
       }
 
-      evaluateGazeDuration(detectedDir);
+      evaluateGazeDuration(nextDir);
     } else {
       eyeClosedStartTime = null;
       drowsyAlertTriggered = false;
@@ -660,7 +673,7 @@
         drowsyAlertTriggered = true;
         drowsyBanner.style.display = 'block';
         playAlertChime();
-        speakVoiceAlert("Critical safety alert. Eyes closed. Keep eyes on the road!");
+        speakVoiceAlert("Critical alert! Eyes closed! Keep your eyes on the road!");
       }
     } else {
       eyeClosedStartTime = null;
@@ -676,7 +689,9 @@
       currentDirection = newDirection;
       directionStartTime = now;
       fixationDuration = 0;
+      alertFiredForCurrentGaze = false;
     } else {
+      if (directionStartTime === null) directionStartTime = now;
       fixationDuration = (now - directionStartTime) / 1000;
     }
 
@@ -685,7 +700,6 @@
       document.getElementById('maxStareVal').innerText = `${maxStareTime.toFixed(1)}s`;
     }
 
-    // UI Updates
     const gazeText = document.getElementById('gazeText');
     const timerText = document.getElementById('fixationTimer');
     const hudOverlay = document.getElementById('hudOverlay');
@@ -718,23 +732,29 @@
         hudOverlay.className = "hud-overlay alert-red";
         centerAlert.className = "center-banner active";
 
-        // FIXED INSTRUCTIONS:
+        // ACCURATE MIRROR INSTRUCTIONS:
         if (currentDirection === 'DOWN') {
           alertInstruction.innerText = "HEAD DOWN DETECTED! EYES UP ON THE ROAD!";
-          speakVoiceAlert("Warning! Head up! Keep your eyes on the road!");
+          if (!alertFiredForCurrentGaze) {
+            speakVoiceAlert("Warning! Head up! Keep your eyes on the road!");
+          }
         } else if (currentDirection === 'LEFT') {
-          // Driver is staring LEFT -> Must remind them to clear the RIGHT mirror & pedestrians!
+          // Driver is staring LEFT -> Must remind them to clear RIGHT mirror & crosswalk!
           alertInstruction.innerText = "CHECK RIGHT MIRROR & ONCOMING TRAFFIC!";
-          speakVoiceAlert("Warning! Check right mirror and oncoming traffic!");
+          if (!alertFiredForCurrentGaze) {
+            speakVoiceAlert("Warning! Check right mirror and oncoming traffic!");
+          }
         } else if (currentDirection === 'RIGHT') {
-          // Driver is staring RIGHT -> Must remind them to clear the LEFT cyclist blindspot!
+          // Driver is staring RIGHT -> Must remind them to clear LEFT cyclist crosswalk!
           alertInstruction.innerText = "CHECK LEFT MIRROR & CYCLIST CROSSWALK!";
-          speakVoiceAlert("Warning! Check left mirror and crosswalk!");
+          if (!alertFiredForCurrentGaze) {
+            speakVoiceAlert("Warning! Check left mirror and crosswalk!");
+          }
         }
 
-        playAlertChime();
-
-        if (Math.floor(fixationDuration) === 2 && fixationDuration < 2.2) {
+        if (!alertFiredForCurrentGaze) {
+          alertFiredForCurrentGaze = true;
+          playAlertChime();
           tunnelVisionIncidents++;
           document.getElementById('incidentsVal').innerText = tunnelVisionIncidents;
           updateScanScore();
@@ -751,32 +771,23 @@
     if (score < 60) scoreEl.style.color = "var(--red)";
   }
 
-  // Lightweight Phone Detector (Runs once every 1.5 seconds, NOT 60 fps!)
-  async function runPhoneDetectionLoop() {
-    if (!isRunning || !objectModel || videoElement.readyState < 4) return;
-    try {
-      const predictions = await objectModel.detect(videoElement);
-      const phoneDetected = predictions.some(
-        p => p.class === 'cell phone' && p.score > 0.55
-      );
-      const alertEl = document.getElementById('phone-alert');
-      if (phoneDetected) {
-        alertEl.style.display = 'block';
-        speakVoiceAlert("Put mobile device away. Distraction detected.");
-      } else {
-        alertEl.style.display = 'none';
-      }
-    } catch(e) {}
-  }
-
   // Toggle Camera & Detection
   async function toggleVisionEngine() {
     const startBtn = document.getElementById('startBtn');
     const statusText = document.getElementById('aiStatusText');
 
+    // 1. Synchronously unlock audio & speech on mobile touch
+    try {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.speak(new SpeechSynthesisUtterance(''));
+      }
+    } catch(e) {}
+
     if (!isRunning) {
       try {
-        statusText.innerText = "Loading AI Vision Models...";
+        statusText.innerText = "Initializing AI Vision...";
         startBtn.disabled = true;
 
         camera = new Camera(videoElement, {
@@ -796,19 +807,7 @@
         startBtn.style.color = "#fff";
         statusText.innerText = "AI Vision Active (Tracking 30 FPS)";
 
-        // Initialize Web Audio
-        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        if (audioCtx.state === 'suspended') audioCtx.resume();
-
         speakVoiceAlert("Gaze Copilot engaged. Scanning for tunnel vision.");
-
-        // Load COCO-SSD asynchronously in background without freezing camera
-        cocoSsd.load().then(model => {
-          objectModel = model;
-          phoneCheckInterval = setInterval(runPhoneDetectionLoop, 1500); // Check every 1.5s
-          console.log("Phone detection active (throttled).");
-        }).catch(err => console.warn("Object model skipped:", err.message));
-
       } catch (err) {
         if (camera) camera.stop();
         isRunning = false;
@@ -818,9 +817,7 @@
       }
     } else {
       if (camera) camera.stop();
-      if (phoneCheckInterval) clearInterval(phoneCheckInterval);
       isRunning = false;
-      document.getElementById('phone-alert').style.display = 'none';
       document.getElementById('drowsy-alert').style.display = 'none';
       eyeClosedStartTime = null;
       drowsyAlertTriggered = false;
