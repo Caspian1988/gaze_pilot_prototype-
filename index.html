@@ -100,7 +100,7 @@
     }
 
     /* Danger Banners */
-    #phone-alert, #drowsy-alert {
+    #phone-alert, #drowsy-alert, #camera-alert {
       display: none;
       width: 100%;
       background-color: var(--red);
@@ -363,6 +363,7 @@
 <div class="container">
   <div id="phone-alert">📱 DISTRACTION ALERT: MOBILE DEVICE DETECTED</div>
   <div id="drowsy-alert">🚨 CRITICAL SAFETY ALERT: PROLONGED EYE CLOSURE DETECTED (MICROSLEEP)</div>
+  <div id="camera-alert">⚠️ WARNING: CAMERA LENS IS OBSTRUCTED</div>
 
   <header>
     <div class="brand">
@@ -454,7 +455,15 @@
   // Mobile Device Object Model
   let objectModel = null;
   let isCheckingPhone = false;
+  let phoneDetected = false;
   let phoneCheckInterval = null;
+  let cameraObstructed = false;
+  let obstructionStartTime = null;
+  let obstructionAlertTriggered = false;
+  let lastObstructionVoiceTime = 0;
+  let lastObstructionCheckTime = 0;
+  const OBSTRUCTION_CHECK_INTERVAL_MS = 200;
+  const OBSTRUCTION_PERSISTENCE_SECONDS = 1.2;
 
   // Calibration and Tracking State
   let centerCalibratedX = 0.50; 
@@ -480,6 +489,10 @@
   const videoElement = document.getElementById('webcam');
   const canvasElement = document.getElementById('output_canvas');
   const canvasCtx = canvasElement.getContext('2d');
+  const obstructionCanvas = document.createElement('canvas');
+  obstructionCanvas.width = 64;
+  obstructionCanvas.height = 48;
+  const obstructionCanvasCtx = obstructionCanvas.getContext('2d');
 
   // Synthesized Chime Engine
   let audioCtx = null;
@@ -506,10 +519,10 @@
   }
 
   // Voice Advisory
-  function speakVoiceAlert(text) {
+  function speakVoiceAlert(text, force = false) {
     if (!voiceEnabled || !('speechSynthesis' in window)) return;
     const now = Date.now();
-    if (now - lastAlertSpokenTime < 2800) return;
+    if (!force && (now - lastAlertSpokenTime < 2800)) return;
     lastAlertSpokenTime = now;
 
     window.speechSynthesis.cancel();
@@ -542,22 +555,142 @@
     speakVoiceAlert("Center calibrated.");
   }
 
-  // Mobile Device Distraction Detector (Throttled to run smoothly every 1.2s)
-  async function checkPhoneDistraction() {
-    if (!isRunning || !objectModel || isCheckingPhone || videoElement.readyState < 2) return;
+  function isCameraObstructed(canvas) {
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return false;
+
+    const { width, height } = canvas;
+    const data = ctx.getImageData(0, 0, width, height).data;
+    const pixelCount = data.length / 4;
+    if (pixelCount === 0) return true;
+
+    let totalBrightness = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      totalBrightness += 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+    }
+
+    const averageBrightness = totalBrightness / pixelCount;
+    // 1. Darkness threshold: total blackout, lens cap, black tape, or hand in dark
+    if (averageBrightness < 32) return true;
+
+    let varianceSum = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      const brightness = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+      const diff = brightness - averageBrightness;
+      varianceSum += diff * diff;
+    }
+
+    const variance = varianceSum / pixelCount;
+    // 2. Uniformity / Featureless threshold: palm, paper, tape, cloth pressed against lens
+    // Normal cabin/face scenes have variance > 600 - 3000. Lens covers typically have variance < 150.
+    return variance < 220;
+  }
+
+  function updateCameraObstruction() {
+    if (!isRunning || !videoElement || videoElement.readyState < 2 || !videoElement.videoWidth || !videoElement.videoHeight) return;
+
+    const now = performance.now();
+    if (now - lastObstructionCheckTime < OBSTRUCTION_CHECK_INTERVAL_MS) return;
+    lastObstructionCheckTime = now;
+
+    try {
+      obstructionCanvasCtx.drawImage(videoElement, 0, 0, obstructionCanvas.width, obstructionCanvas.height);
+      const isCurrentlyObstructed = isCameraObstructed(obstructionCanvas);
+
+      const cameraBanner = document.getElementById('camera-alert');
+      const hudOverlay = document.getElementById('hudOverlay');
+      const gazeText = document.getElementById('gazeText');
+
+      if (isCurrentlyObstructed) {
+        if (obstructionStartTime === null) {
+          obstructionStartTime = Date.now();
+        }
+        const elapsedSec = (Date.now() - obstructionStartTime) / 1000;
+
+        // Debounce: must be obstructed for at least 1.2s to prevent false alerts from quick hand passes
+        if (elapsedSec >= OBSTRUCTION_PERSISTENCE_SECONDS) {
+          cameraObstructed = true;
+          if (cameraBanner) cameraBanner.style.display = 'block';
+          if (hudOverlay) hudOverlay.className = 'hud-overlay alert-red';
+          if (gazeText) {
+            gazeText.innerText = 'BLOCKED';
+            gazeText.style.color = 'var(--red)';
+          }
+
+          // Suppress phone alert during obstruction
+          phoneDetected = false;
+          const phoneBanner = document.getElementById('phone-alert');
+          if (phoneBanner) phoneBanner.style.display = 'none';
+
+          const nowMs = Date.now();
+          if (!obstructionAlertTriggered) {
+            obstructionAlertTriggered = true;
+            lastObstructionVoiceTime = nowMs;
+            playAlertChime();
+            speakVoiceAlert("Warning! Camera lens is obstructed! Clear camera view!", true);
+          } else if (nowMs - lastObstructionVoiceTime > 5000) {
+            lastObstructionVoiceTime = nowMs;
+            playAlertChime();
+            speakVoiceAlert("Warning! Camera lens is obstructed! Clear camera view!", true);
+          }
+        }
+      } else {
+        obstructionStartTime = null;
+        if (cameraObstructed) {
+          cameraObstructed = false;
+          obstructionAlertTriggered = false;
+
+          if (cameraBanner) cameraBanner.style.display = 'none';
+          if (hudOverlay && currentDirection === 'FORWARD') {
+            hudOverlay.className = 'hud-overlay';
+          }
+          if (gazeText && gazeText.innerText === 'BLOCKED') {
+            gazeText.innerText = currentDirection;
+            gazeText.style.color = 'var(--cyan)';
+          }
+          try {
+            if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+          } catch(e) {}
+        }
+      }
+    } catch (err) {
+      console.error('Camera obstruction check failed:', err);
+    }
+  }
+
+  // Mobile Device Distraction Detector (Throttled to run smoothly every 1.5s)
+  async function detectObjects() {
+    if (!isRunning || !videoElement || isCheckingPhone || videoElement.readyState < 2) return;
+    if (cameraObstructed) {
+      phoneDetected = false;
+      const phoneBanner = document.getElementById('phone-alert');
+      if (phoneBanner) phoneBanner.style.display = 'none';
+      return;
+    }
+
     isCheckingPhone = true;
     try {
-      const predictions = await objectModel.detect(videoElement);
-      const phoneDetected = predictions.some(p => p.class === 'cell phone' && p.score >= 0.48);
       const phoneBanner = document.getElementById('phone-alert');
+      if (!objectModel) return;
+
+      const predictions = await objectModel.detect(videoElement);
+      let phoneFound = false;
+      predictions.forEach(prediction => {
+        if ((prediction.class === 'cell phone' || prediction.class === 'remote') && prediction.score > 0.25) {
+          phoneFound = true;
+          console.log('Phone detected with score:', prediction.score);
+        }
+      });
+
+      phoneDetected = phoneFound;
       if (phoneDetected) {
-        phoneBanner.style.display = 'block';
-        playAlertChime();
-        speakVoiceAlert("Warning! Mobile device detected! Eyes on the road!");
+        if (phoneBanner) phoneBanner.style.display = 'block';
+        speakVoiceAlert('Warning! Put away cell phone!');
       } else {
-        phoneBanner.style.display = 'none';
+        if (phoneBanner) phoneBanner.style.display = 'none';
       }
-    } catch(e) {
+    } catch (err) {
+      console.error('Camera obstruction or COCO-SSD detection error:', err);
     } finally {
       isCheckingPhone = false;
     }
@@ -578,6 +711,17 @@
   faceMesh.onResults(onFaceResults);
 
   function onFaceResults(results) {
+    if (cameraObstructed) {
+      canvasElement.width = videoElement.videoWidth || 640;
+      canvasElement.height = videoElement.videoHeight || 480;
+      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+      eyeClosedStartTime = null;
+      drowsyAlertTriggered = false;
+      const drowsyBanner = document.getElementById('drowsy-alert');
+      if (drowsyBanner) drowsyBanner.style.display = 'none';
+      return;
+    }
+
     canvasElement.width = videoElement.videoWidth || 640;
     canvasElement.height = videoElement.videoHeight || 480;
     canvasCtx.save();
@@ -822,6 +966,7 @@
 
         camera = new Camera(videoElement, {
           onFrame: async () => {
+            updateCameraObstruction();
             await faceMesh.send({ image: videoElement });
           },
           width: 640,
@@ -840,16 +985,12 @@
         speakVoiceAlert("Gaze Copilot engaged. Scanning for tunnel vision.");
 
         // Start Throttled Mobile Device Detection in background
-        if (typeof cocoSsd !== 'undefined') {
-          if (!objectModel) {
-            cocoSsd.load().then(model => {
-              objectModel = model;
-              if (isRunning) phoneCheckInterval = setInterval(checkPhoneDistraction, 1200);
-            }).catch(e => console.warn("COCO-SSD phone detection error:", e));
-          } else {
-            phoneCheckInterval = setInterval(checkPhoneDistraction, 1200);
-          }
+        if (typeof cocoSsd !== 'undefined' && !objectModel) {
+          cocoSsd.load().then(model => {
+            objectModel = model;
+          }).catch(e => console.warn("COCO-SSD phone detection error:", e));
         }
+        phoneCheckInterval = setInterval(detectObjects, 1500);
 
       } catch (err) {
         if (camera) camera.stop();
@@ -864,6 +1005,12 @@
       isRunning = false;
       document.getElementById('phone-alert').style.display = 'none';
       document.getElementById('drowsy-alert').style.display = 'none';
+      document.getElementById('camera-alert').style.display = 'none';
+      cameraObstructed = false;
+      obstructionStartTime = null;
+      obstructionAlertTriggered = false;
+      lastObstructionVoiceTime = 0;
+      lastObstructionCheckTime = 0;
       eyeClosedStartTime = null;
       drowsyAlertTriggered = false;
       startBtn.innerText = "🚀 Activate Gaze Copilot";
