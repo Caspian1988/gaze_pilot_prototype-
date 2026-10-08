@@ -555,35 +555,26 @@
     speakVoiceAlert("Center calibrated.");
   }
 
-  function isCameraObstructed(canvas) {
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return false;
+  function isCameraObstructed(videoElement, brightnessThreshold = 25) {
+    if (!videoElement || videoElement.paused || videoElement.ended || !videoElement.videoWidth) {
+      return false;
+    }
 
-    const { width, height } = canvas;
-    const data = ctx.getImageData(0, 0, width, height).data;
+    obstructionCanvasCtx.drawImage(videoElement, 0, 0, obstructionCanvas.width, obstructionCanvas.height);
+    const data = obstructionCanvasCtx.getImageData(
+      0,
+      0,
+      obstructionCanvas.width,
+      obstructionCanvas.height
+    ).data;
     const pixelCount = data.length / 4;
-    if (pixelCount === 0) return true;
-
     let totalBrightness = 0;
     for (let i = 0; i < data.length; i += 4) {
       totalBrightness += 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
     }
 
     const averageBrightness = totalBrightness / pixelCount;
-    // 1. Darkness threshold: total blackout, lens cap, black tape, or hand in dark
-    if (averageBrightness < 32) return true;
-
-    let varianceSum = 0;
-    for (let i = 0; i < data.length; i += 4) {
-      const brightness = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-      const diff = brightness - averageBrightness;
-      varianceSum += diff * diff;
-    }
-
-    const variance = varianceSum / pixelCount;
-    // 2. Uniformity / Featureless threshold: palm, paper, tape, cloth pressed against lens
-    // Normal cabin/face scenes have variance > 600 - 3000. Lens covers typically have variance < 150.
-    return variance < 220;
+    return averageBrightness < brightnessThreshold;
   }
 
   function updateCameraObstruction() {
@@ -594,8 +585,7 @@
     lastObstructionCheckTime = now;
 
     try {
-      obstructionCanvasCtx.drawImage(videoElement, 0, 0, obstructionCanvas.width, obstructionCanvas.height);
-      const isCurrentlyObstructed = isCameraObstructed(obstructionCanvas);
+      const isCurrentlyObstructed = isCameraObstructed(videoElement);
 
       const cameraBanner = document.getElementById('camera-alert');
       const hudOverlay = document.getElementById('hudOverlay');
@@ -967,7 +957,9 @@
         camera = new Camera(videoElement, {
           onFrame: async () => {
             updateCameraObstruction();
-            await faceMesh.send({ image: videoElement });
+            if (!cameraObstructed) {
+              await faceMesh.send({ image: videoElement });
+            }
           },
           width: 640,
           height: 480
